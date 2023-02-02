@@ -1,7 +1,9 @@
-import * as _ from 'lodash';
+function uniq(array: any[]) {
+	return Array.from(new Set(array));
+}
 
 export const getWordsFromFragment = (fragment: string) =>
-	_.uniq(
+	uniq(
 		fragment
 			.split(' ')
 			.map((i) => i.trim().replace(/[-[\]{}()*+?.,^$|#\s]/g, '')) // remove punctuation

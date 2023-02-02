@@ -10,7 +10,10 @@ export const POST = (async ({ request }) => {
 				lang: lang ?? 'en'
 			});
 		})
-	);
+	).catch((e) => {
+		console.log(e);
+		return [];
+	});
 
 	return json({ data: res.flat() });
 }) satisfies RequestHandler;
