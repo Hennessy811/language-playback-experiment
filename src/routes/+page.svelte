@@ -39,7 +39,7 @@
 			src: ['/eng/audio.mp3'],
 			autoplay: false,
 			onload: () => {
-				console.log('onload');
+				main.loaded = true;
 			},
 			onplay: () => {
 				console.log('onplay');
@@ -283,7 +283,7 @@
 
 <main class="px-4 m-auto py-12 max-w-4xl">
 	<div class="flex gap-4">
-		{#if main.audio}
+		{#if main.audio && main.loaded}
 			{#if main.playing}
 				<button class="btn" on:click={() => handlePlayMain()}>Pause</button>
 			{:else}
@@ -317,7 +317,7 @@
 					- Continue playing
 				</div>
 			</div>
-		{:else if main.loaded}
+		{:else if main.audio && !main.loaded}
 			<p>Loading...</p>
 		{:else}
 			<button class="btn" on:click={load}>Load audio</button>
