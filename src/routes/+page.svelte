@@ -7,6 +7,8 @@
 	let subs: ReturnType<typeof parseSRT> = [];
 	let interval: NodeJS.Timeout;
 
+	let lang = 'en';
+
 	let main = {
 		loaded: false,
 		playing: false,
@@ -30,13 +32,14 @@
 	// onMount(async () => {
 	// });
 
-	async function load() {
-		const res = await fetch('/eng/sub.srt');
+	async function load(langCode: string) {
+		lang = langCode;
+		const res = await fetch(`/${langCode}/sub.srt`);
 		const text = await res.text();
 		subs = parseSRT(text);
 
 		main.audio = new Howl({
-			src: ['/eng/audio.mp3'],
+			src: [`/${langCode}/audio.mp3`],
 			autoplay: false,
 			onload: () => {
 				main.loaded = true;
@@ -90,7 +93,7 @@
 			method: 'POST',
 			body: JSON.stringify({
 				text: fragment.text,
-				lang: 'en'
+				lang
 			})
 		}).then((res) => res.json())) as {
 			data: {
@@ -138,7 +141,8 @@
 			method: 'POST',
 			body: JSON.stringify({
 				word,
-				lang: 'English',
+				lang: lang === 'en' ? 'English' : lang === 'pt' ? 'Portuguese' : 'French',
+				langCode: lang,
 				context
 			}),
 			signal: main.explanationAbortController.signal
@@ -320,7 +324,9 @@
 		{:else if main.audio && !main.loaded}
 			<p>Loading...</p>
 		{:else}
-			<button class="btn" on:click={load}>Load audio</button>
+			<button class="btn" on:click={() => load('en')}>Load English sample</button>
+			<button class="btn" on:click={() => load('fr')}>Load French sample</button>
+			<button class="btn" on:click={() => load('pt')}>Load Portuguese sample</button>
 		{/if}
 	</div>
 
