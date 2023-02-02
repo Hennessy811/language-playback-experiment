@@ -8,6 +8,7 @@
 	let interval: NodeJS.Timeout;
 
 	let main = {
+		loaded: false,
 		playing: false,
 		audio: null as Howl | null,
 		time: 0,
@@ -26,7 +27,10 @@
 	/**
 	 * Load audio file and subs
 	 */
-	onMount(async () => {
+	// onMount(async () => {
+	// });
+
+	async function load() {
 		const res = await fetch('/eng/sub.srt');
 		const text = await res.text();
 		subs = parseSRT(text);
@@ -48,7 +52,7 @@
 		interval = setInterval(() => {
 			main.time = main.audio?.seek() || 0;
 		}, 100);
-	});
+	}
 
 	onDestroy(() => {
 		clearInterval(interval);
@@ -313,8 +317,10 @@
 					- Continue playing
 				</div>
 			</div>
-		{:else}
+		{:else if main.loaded}
 			<p>Loading...</p>
+		{:else}
+			<button class="btn" on:click={load}>Load audio</button>
 		{/if}
 	</div>
 
