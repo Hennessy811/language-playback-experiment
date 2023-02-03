@@ -2,7 +2,7 @@
 	import parseSRT from '$lib/srtToJson';
 	import { getWordsFromFragment, secondsToDuration } from '$lib/utils';
 	import { Howl } from 'howler';
-	import { omit } from 'lodash';
+	import _ from 'lodash';
 	import { settings } from '../stores/settings';
 	import { onDestroy, onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
@@ -334,7 +334,7 @@
 	<div class="fixed top-4 left-4">
 		<pre>
 {JSON.stringify(
-				omit(main, [
+				_.omit(main, [
 					'audio',
 					'replayingWordsExplanationAudio',
 					'replayingWordsAudioQueue',
