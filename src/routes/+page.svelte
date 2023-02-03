@@ -2,7 +2,10 @@
 	import parseSRT from '$lib/srtToJson';
 	import { getWordsFromFragment, secondsToDuration } from '$lib/utils';
 	import { Howl } from 'howler';
+	import { omit } from 'lodash';
+	import { settings } from '../stores/settings';
 	import { onDestroy, onMount } from 'svelte';
+	import { fade } from 'svelte/transition';
 
 	let subs: ReturnType<typeof parseSRT> = [];
 	let interval: NodeJS.Timeout;
@@ -74,7 +77,7 @@
 		main.replayingWordsIdx += 1;
 
 		if (audio) {
-			audio.rate(0.6);
+			audio.rate($settings.replayWordsRate);
 			audio.play();
 			audio.once('end', () => {
 				playAudioQueue(cb);
@@ -115,7 +118,7 @@
 				return;
 			}
 
-			stopReplay();
+			_stopReplay();
 			if (main.playing && !main.audio?.playing()) {
 				main.audio?.play();
 			}
@@ -136,6 +139,23 @@
 			fragment.text,
 			subs[main.replayingFragmentIdx + 1]?.text
 		].join(' ');
+
+		const loader = await fetch('/api/voiceover', {
+			method: 'POST',
+			body: JSON.stringify({
+				text: `${word}`,
+				lang
+			}),
+			signal: main.explanationAbortController.signal
+		}).then((res) => res.json());
+
+		new Howl({
+			src: [
+				`data:audio/mp3;base64,${loader.data.map((r: { base64: string }) => r.base64).join('')}`
+			],
+			autoplay: true
+			// rate: 1.2
+		});
 
 		const res = (await fetch('/api/explanation', {
 			method: 'POST',
@@ -162,6 +182,7 @@
 				console.log('onload');
 			},
 			onend: () => {
+				stopReplayExplanation();
 				if (main.playing && !main.audio?.playing()) main.audio?.play();
 			}
 		});
@@ -178,8 +199,8 @@
 		if (!main.audio) return;
 
 		if (main.replayExplanation) {
-			main.explanationAbortController.abort();
-			stopReplay();
+			abort();
+			_stopReplay();
 		}
 
 		if (main.replayingWords) {
@@ -190,7 +211,8 @@
 			 * and play it
 			 */
 			getWordExplanation();
-			stopReplay();
+
+			stopReplayWords();
 			return;
 		}
 
@@ -199,7 +221,7 @@
 		if (current) {
 			let replayingFragmentIdx = subs.findIndex((sub) => sub.start === current.start);
 
-			if (main.time - current.start < 0.5) {
+			if (main.time - current.start < $settings.fragmentBoundsTolerance) {
 				if (replayingFragmentIdx < 1) return;
 				replayingFragmentIdx -= 1;
 				const prev = subs[replayingFragmentIdx];
@@ -222,13 +244,35 @@
 		}
 	}
 
-	function stopReplay() {
+	function stopReplayWords() {
+		main.replayingWords = false;
+		main.replayingWordsIdx = -1;
+		main.replayingWordsAudioQueue.forEach((audio) => audio.unload());
+		main.replayingWordsAudioQueue = [];
+	}
+
+	function stopReplayExplanation() {
+		main.replayExplanation = false;
+		main.replayingWordsExplanationAudio?.unload();
+		main.replayingWordsExplanationAudio = null;
+	}
+
+	function abort() {
+		main.explanationAbortController.abort();
+		main.explanationAbortController = new AbortController();
+	}
+
+	/**
+	 * DEPRECATED
+	 */
+	function _stopReplay() {
 		main.replayingWords = false;
 		main.replayingWordsIdx = -1;
 		main.replayingWordsAudioQueue.forEach((audio) => audio.unload());
 		main.replayingWordsAudioQueue = [];
 
 		if (main.replayExplanation) {
+			main.replayExplanation = false;
 			main.replayingWordsExplanationAudio?.unload();
 			main.replayingWordsExplanationAudio = null;
 		}
@@ -252,9 +296,9 @@
 			e.preventDefault();
 
 			if (main.replayExplanation) {
-				main.explanationAbortController.abort();
+				abort();
 			}
-			stopReplay();
+			_stopReplay();
 
 			handlePlayMain();
 		}
@@ -266,13 +310,14 @@
 			e.preventDefault();
 
 			if (main.replayExplanation) {
-				main.explanationAbortController.abort();
+				abort();
 			}
-			stopReplay();
+			stopReplayExplanation();
+			stopReplayWords();
 
 			// move to next fragment
-			const current = subs.find((sub) => main.time >= sub.start && main.time < sub.end);
-			main.audio?.seek(current?.end || 0);
+			const current = subs.findIndex((sub) => main.time >= sub.start && main.time < sub.end);
+			main.audio?.seek(subs[current + 1]?.start ?? subs[0].start);
 			if (main.playing && !main.audio?.playing()) main.audio?.play();
 		}
 	}
@@ -285,7 +330,54 @@
 
 <svelte:window on:keydown={handleKeyPress} />
 
-<main class="px-4 m-auto py-12 max-w-4xl">
+<main class="px-4 m-auto py-12 max-w-4xl relative">
+	<div class="fixed top-4 left-4">
+		<pre>
+{JSON.stringify(
+				omit(main, [
+					'audio',
+					'replayingWordsExplanationAudio',
+					'replayingWordsAudioQueue',
+					'explanationAbortController'
+				]),
+				null,
+				2
+			)
+				.replace('{', '')
+				.replace('}', '')}
+</pre>
+
+		<div class="prose prose-sm max-w-xs">
+			<hr />
+			<h2>Settings</h2>
+
+			<div class="form-control w-full max-w-xs">
+				<label class="label">
+					<span class="label-text">Fragment bounds tolerance (seconds)</span>
+				</label>
+				<input
+					type="number"
+					class="input input-bordered w-full max-w-xs input-sm"
+					bind:value={$settings.fragmentBoundsTolerance}
+					min="0"
+					step="0.1"
+				/>
+			</div>
+			<div class="form-control w-full max-w-xs">
+				<label class="label">
+					<span class="label-text">Replay words rate</span>
+				</label>
+				<input
+					type="number"
+					class="input input-bordered w-full max-w-xs input-sm"
+					bind:value={$settings.replayWordsRate}
+					min="0"
+					step="0.1"
+				/>
+			</div>
+		</div>
+	</div>
+
 	<div class="flex gap-4">
 		{#if main.audio && main.loaded}
 			{#if main.playing}
@@ -322,18 +414,37 @@
 				</div>
 			</div>
 		{:else if main.audio && !main.loaded}
-			<p>Loading...</p>
+			<!-- <p>Loading...</p> -->
 		{:else}
-			<button class="btn" on:click={() => load('en')}>Load English sample</button>
-			<button class="btn" on:click={() => load('fr')}>Load French sample</button>
-			<button class="btn" on:click={() => load('pt')}>Load Portuguese sample</button>
+			<div class="prose m-auto text-center">
+				<h1>Pick the language to start</h1>
+
+				<div class="flex gap-4 justify-center">
+					<button class="btn" on:click={() => load('en')}> English </button>
+					<button class="btn" on:click={() => load('fr')}> French </button>
+					<button class="btn" on:click={() => load('pt')}> Portuguese </button>
+				</div>
+			</div>
 		{/if}
 	</div>
 
 	<hr class="mt-4" />
 
-	{#if subs}
-		<div class="space-y-4 mt-4">
+	{#if subs && main.audio && main.loaded}
+		<div
+			in:fade
+			class={`space-y-4 mt-4 transition relative ${
+				main.replayExplanation ? 'pointer-events-none opacity-30' : ''
+			}`}
+		>
+			{#if main.replayExplanation}
+				<div
+					in:fade
+					class="prose max-w-full m-auto text-center top-36 left-0 w-full my-12 absolute flex justify-center"
+				>
+					<h1 class="animate-pulse bg-slate-600 text-white font-mono">Explaining...</h1>
+				</div>
+			{/if}
 			{#each subs as sub}
 				{@const words = getWordsFromFragment(sub.text)}
 				{@const currentFragment = main.time >= sub.start && main.time < sub.end}
@@ -342,6 +453,9 @@
 					on:click={() => {
 						main.audio?.seek(sub.start);
 						main.time = sub.start;
+
+						stopReplayExplanation();
+						stopReplayWords();
 					}}
 					class={`border-2 rounded-md flex gap-4 items-start px-4 py-2 cursor-pointer  transition ${
 						currentFragment ? 'border-black' : 'border-transparent hover:border-slate-400'
@@ -359,9 +473,9 @@
 									currentFragment &&
 									main.replayingWords &&
 									main.replayingWordsIdx === words.indexOf(word) &&
-									words.indexOf(word) !== -1
+									!!words.find((w) => word.includes(w))
 										? 'bg-slate-900 text-white'
-										: currentFragment && words.indexOf(word) !== -1
+										: currentFragment && !!words.find((w) => word.includes(w))
 										? 'bg-slate-300'
 										: ''
 								}`}
@@ -372,6 +486,35 @@
 					</p>
 				</div>
 			{/each}
+		</div>
+	{/if}
+
+	{#if main.audio && !main.loaded}
+		<div class="mt-12 prose text-center m-auto">
+			<h2>Loading the audio...</h2>
+			<p>Please, wait - the process can take a few minutes</p>
+
+			<hr />
+
+			<div class="space-y-2 text-left">
+				<h3>Controls</h3>
+				<div class="text-sm">
+					<p class="kbd kbd-xs font-mono font-bold">Space</p>
+					- play/pause
+				</div>
+				<div class="text-sm">
+					<p class="kbd kbd-xs font-mono font-bold">Arrow Left</p>
+					- Enter replay mode (Play each word in segment)
+				</div>
+				<div class="text-sm">
+					<p class="kbd kbd-xs font-mono font-bold">Arrow Left (in replay mode)</p>
+					- Select the word for explanation
+				</div>
+				<div class="text-sm">
+					<p class="kbd kbd-xs font-mono font-bold">Arrow Right</p>
+					- Continue playing
+				</div>
+			</div>
 		</div>
 	{/if}
 

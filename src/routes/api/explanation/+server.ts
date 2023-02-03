@@ -1,13 +1,26 @@
+import { GOOGLE_TRANSLATE_API_KEY } from '$env/static/private';
 import { openai } from '$lib/openai';
 import { getWordsFromFragment } from '$lib/utils';
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import * as googleTTS from 'google-tts-api'; // ES6 or TypeScript
 
+interface TranslateResponse {
+	data: {
+		translations: {
+			translatedText: string;
+			detectedSourceLanguage: string;
+		}[];
+	};
+}
+
 export const POST = (async ({ request }) => {
 	const { word, context, lang, langCode } = await request.json();
+
 	const prompt = `I have a word in ${
 		lang ?? 'English'
-	}, and a few words of context where that word was used. I want to get a short and very simple explanation baby can understand, then a couple of usage samples, and then a few synonyms and antonyms. Write a prompt with placeholders for the word and the context
+	}, and a few words of context where that word was used. I want to get a short and very simple explanation baby can understand, then a couple of usage samples, and then a few synonyms and antonyms. Write a prompt with placeholders for the word and the context. Answer should be ${
+		lang ?? 'English'
+	} language.
 
 Word: {Word}
 Context: {Context}
@@ -60,9 +73,37 @@ Result:`;
 		throw error(500, 'No text returned from OpenAI');
 	}
 
+	const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`;
+
+	if (langCode !== 'en') {
+		console.log('Translating to', { langCode });
+
+		const translated = await fetch(url, {
+			method: 'POST',
+			body: JSON.stringify({
+				target: langCode,
+
+				source: 'en',
+				format: 'text',
+				q: text
+			})
+		}).then((res) => res.json() as Promise<TranslateResponse>);
+
+		const translatedText = translated.data.translations[0].translatedText;
+		console.log(translatedText);
+
+		const audio = await googleTTS.getAllAudioBase64(translatedText, {
+			lang: langCode ?? 'en'
+		});
+
+		return json({
+			audio,
+			text: translatedText
+		});
+	}
+
 	const audio = await googleTTS.getAllAudioBase64(text, {
-		lang: langCode ?? 'en',
-		slow: true
+		lang: langCode ?? 'en'
 	});
 
 	return json({
