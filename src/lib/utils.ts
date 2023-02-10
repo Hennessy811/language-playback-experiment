@@ -32,3 +32,7 @@ export function secondsToDuration(seconds: number) {
 
 	return duration.trim();
 }
+
+export const cx = (...classes: (string | undefined)[]) => {
+	return classes.filter(Boolean).join(' ');
+};

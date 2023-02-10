@@ -14,41 +14,45 @@ interface TranslateResponse {
 }
 
 export const POST = (async ({ request }) => {
-	const { word, context, lang, langCode } = await request.json();
+	const { word, context, lang, langCode, translateTo } = await request.json();
 
 	const prompt = `I have a word in ${
 		lang ?? 'English'
-	}, and a few words of context where that word was used. I want to get a short and very simple explanation baby can understand, then a couple of usage samples, and then a few synonyms and antonyms. Write a prompt with placeholders for the word and the context. Answer should be ${
-		lang ?? 'English'
-	} language.
+	}, and a few words of context where that word was used. I want to get a short and very simple explanation baby can understand, then a couple of usage samples, and then a few synonyms and antonyms. Write a prompt with placeholders for the word and the context.
 
 Word: {Word}
 Context: {Context}
 
-Explanation for a baby:
+Simple explanation:
 A simple definition of the word {Word} is: {Simple Definition}
 
 Usage Samples:
 
     {Sample Sentence 1}
 
-    {Sample Sentence 2}
+	Another example:
 
+    {Sample Sentence 2}
 
 Example:
 
 Word: Happy
 Context: The child was happy because he got a new toy.
 
-Explanation for a baby:
+Simple explanation:
 A simple definition of the word "Happy" is: Feeling good or joyful.
 
 Usage Samples:
 
     The sun was shining and everyone was happy.
-	
+
+	Another example:
+
     I feel so happy when I spend time with my friends.
 
+Word explanation should be in ${lang ?? 'English'} language, and usage samples should be in ${
+		lang ?? 'English'
+	} language.
 
 Now generate for the following input
 
@@ -76,13 +80,12 @@ Result:`;
 	const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`;
 
 	if (langCode !== 'en') {
-		console.log('Translating to', { langCode });
+		// console.log('Translating to', { langCode, translateTo });
 
 		const translated = await fetch(url, {
 			method: 'POST',
 			body: JSON.stringify({
 				target: langCode,
-
 				source: 'en',
 				format: 'text',
 				q: text
@@ -90,7 +93,6 @@ Result:`;
 		}).then((res) => res.json() as Promise<TranslateResponse>);
 
 		const translatedText = translated.data.translations[0].translatedText;
-		console.log(translatedText);
 
 		const audio = await googleTTS.getAllAudioBase64(translatedText, {
 			lang: langCode ?? 'en'
