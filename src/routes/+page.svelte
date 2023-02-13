@@ -16,15 +16,17 @@
 	import Settings from '@/components/Settings.svelte';
 	import LoadingScreen from '@/components/LoadingScreen.svelte';
 	import { languages } from '@/lib/languages';
+	import axios from 'axios';
 
 	const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 	let subs: ReturnType<typeof parseSRT> = [];
 	let interval: NodeJS.Timeout;
 
-	$: lang = 'en' as StudentLanguage;
+	$: textLang = 'en' as StudentLanguage;
 	$: studentLevel = 'beginner' as StudentLevel;
-	$: studentLang = 'en';
+	$: studentLang = 'ru';
+	$: studentName = 'Dmitrii';
 	$: mode = 'regular' as PlaybackMode;
 	$: state = {
 		dictionary: 'initial',
@@ -65,16 +67,14 @@
 		state = { ...state };
 	};
 
-	async function load(langCode: StudentLanguage) {
-		lang = langCode;
-
-		const res = await fetch(`/${langCode}/sub.srt`);
+	async function load() {
+		const res = await fetch(`/${textLang}/sub.srt`);
 		const text = await res.text();
 		subs = parseSRT(text);
 
 		setState('regular', 'loading');
 		main.audio = new Howl({
-			src: [`/${langCode}/audio.mp3`],
+			src: [`/${textLang}/audio.mp3`],
 			autoplay: false,
 			onload: () => {
 				setState('regular', 'paused');
@@ -151,10 +151,11 @@
 			audio.play();
 
 			audio.once('end', async () => {
-				main.replayingWordsIdx += 1;
 				if (main.replaySingleWord) {
 					main.replaySingleWord = false;
 					return;
+				} else {
+					main.replayingWordsIdx += 1;
 				}
 				playAudioQueue(cb);
 			});
@@ -169,7 +170,7 @@
 		main.replayingFragmentIdx = currentFragmentIdx;
 		const fragment = subs[currentFragmentIdx];
 
-		const res = (await getVoiceoverSrc(fragment.text)) as {
+		const res = (await getVoiceoverSrc(fragment.text, false, textLang)) as {
 			shortText: string;
 			base64: string;
 		}[];
@@ -223,38 +224,32 @@
 			subs[currentFragmentIdx + 1]?.text
 		].join(' ');
 
-		await delay(500);
-		voiceoverForPhrase(`${replayingWord}`);
+		await delay(1500);
+		voiceoverForPhrase(`${replayingWord}`, textLang);
 
-		const res = (await fetch('/api/explanation', {
-			method: 'POST',
-			body: JSON.stringify({
-				word: replayingWord,
-				lang: lang === 'en' ? 'English' : lang === 'pt' ? 'Portuguese' : 'French',
-				langCode: lang,
-				...(studentLevel === 'beginner' && { translateTo: studentLang }),
-				context
-			}),
-			signal: main.explanationAbortController.signal
-		}).then((res) => res.json())) as {
-			audio: {
-				base64: string;
-			}[];
+		const res = await axios.post<{
+			audio: string;
 			translatedAudio?: {
 				base64: string;
 			}[];
-		};
+		}>(
+			'/api/explanation',
+			{
+				word: replayingWord,
+				isBeginner: studentLevel === 'beginner',
+				studentLanguage: studentLang,
+				textLanguage: textLang,
+				studentName,
+				context
+			},
+			{ signal: main.explanationAbortController.signal }
+		);
 
 		/**
 		 * Merge all audio base64 files into one track and play it
 		 */
 		const audio = new Howl({
-			src: [
-				`data:audio/mp3;base64,${[
-					res.audio.map((r) => r.base64).join(''),
-					res.translatedAudio?.map((r) => r.base64).join('') ?? ''
-				].join('')}`
-			],
+			src: [`data:audio/mp3;base64,${[res.data?.audio].join('')}`],
 			autoplay: true,
 			onplay: (e) => {
 				setState('dictionary', 'playing');
@@ -388,6 +383,9 @@
 
 				await delay(1000);
 				voiceoverForPhrase(`Normal play mode`, 'en');
+
+				await delay(3000);
+				handlePlayMain(true);
 			}
 
 			/**
@@ -493,7 +491,7 @@
 			)
 				.replace('{', '')
 				.replace('}', '')}
-</pre>
+		</pre>
 
 		<Settings />
 	</div>
@@ -536,29 +534,46 @@
 		{/if}
 
 		{#if state.regular === 'initial'}
-			<div class="prose m-auto text-center max-w-md">
-				<h1>Select your language level</h1>
+			<div class="prose m-auto max-w-md space-y-8">
+				<div class="form-control w-full">
+					<label class="font-medium"> What is your name?</label>
+					<input
+						type="text"
+						bind:value={studentName}
+						placeholder="What is your name?"
+						class="input input-bordered w-full"
+					/>
+				</div>
 
-				<select class="select w-full" bind:value={studentLevel}>
-					<option value="beginner">Beginner</option>
-					<option value="intermediate">Intermediate+</option>
-				</select>
+				<div>
+					<label class="font-medium">What language you want to learn?</label>
+					<select class="select w-full" bind:value={textLang}>
+						<option value="en">English</option>
+						<option value="fr">French</option>
+						<option value="pt">Portugese</option>
+					</select>
+				</div>
+
+				<div>
+					<label class="font-medium">Select your language level</label>
+					<select class="select w-full" bind:value={studentLevel}>
+						<option value="beginner">Beginner</option>
+						<option value="intermediate">Intermediate+</option>
+					</select>
+				</div>
 
 				{#if studentLevel === 'beginner'}
-					<select class="select w-full mt-4" bind:value={studentLang}>
-						{#each _.entries(languages) as lang}
-							<option value={lang[0]}>{lang[1]}</option>
-						{/each}
-					</select>
+					<div>
+						<label class="font-medium">What is your native language?</label>
+						<select class="select w-full" bind:value={studentLang}>
+							{#each _.entries(languages) as lang}
+								<option value={lang[0]}>{lang[1]}</option>
+							{/each}
+						</select>
+					</div>
 				{/if}
 
-				<h2>then pick the language to start</h2>
-
-				<div class="flex gap-4 justify-center">
-					<button class="btn" on:click={() => load('en')}> English </button>
-					<button class="btn" on:click={() => load('fr')}> French </button>
-					<button class="btn" on:click={() => load('pt')}> Portuguese </button>
-				</div>
+				<button class="btn w-full" on:click={() => load()}>Get started</button>
 			</div>
 		{/if}
 	</div>

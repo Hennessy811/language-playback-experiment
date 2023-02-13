@@ -1,8 +1,13 @@
-import { GOOGLE_TRANSLATE_API_KEY } from '$env/static/private';
+import { GOOGLE_TRANSLATE_API_KEY, OPENAI_KEY } from '$env/static/private';
 import { openai } from '$lib/openai';
 import { getWordsFromFragment } from '$lib/utils';
 import { error, json, type RequestHandler } from '@sveltejs/kit';
+import axios from 'axios';
+// @ts-expect-error this is fine
+import { ChatGPTClient } from '@waylaidwanderer/chatgpt-api';
+
 import * as googleTTS from 'google-tts-api'; // ES6 or TypeScript
+import { languages } from '@/lib/languages';
 
 interface TranslateResponse {
 	data: {
@@ -13,103 +18,178 @@ interface TranslateResponse {
 	};
 }
 
-export const POST = (async ({ request }) => {
-	const { word, context, lang, langCode, translateTo } = await request.json();
+const cacheOptions = {};
 
-	const prompt = `I have a word in ${
-		lang ?? 'English'
-	}, and a few words of context where that word was used. I want to get a short and very simple explanation baby can understand, then a couple of usage samples, and then a few synonyms and antonyms. Write a prompt with placeholders for the word and the context.
+const chatGptClient = new ChatGPTClient(
+	OPENAI_KEY,
+	{
+		modelOptions: {
+			model: 'text-davinci-003'
+		},
+		debug: false
+	},
+	cacheOptions
+);
 
-Word: {Word}
-Context: {Context}
+const getPromptWithWordExamples = (
+	word: string,
+	context: string,
+	textLanguage: string,
+	mode: 'usage' | 'explanation'
+) => {
+	const usageSamples =
+		'I want you to act as an AI language tutor. I will provide you with a word and a context in which the word is used. You will then write a few simple sentences with examples of using this word, which help the beginner to understand and learn the word.';
+	const explanationPrefix =
+		'I want you to act as an AI language tutor. I will provide you with a word and a context in which the word is used. You will then write a simple explanation of the word in the given context, which help the beginner to understand and learn the word.';
 
-Simple explanation:
-A simple definition of the word {Word} is: {Simple Definition}
+	const prefix = mode === 'usage' ? usageSamples : explanationPrefix;
+	const prompt = `${prefix}
+	
+I have a word for you: ${word}. This word was used in the following context: "${context}". Answer in ${textLanguage} language`;
 
-Usage Samples:
+	return prompt;
+};
 
-    {Sample Sentence 1}
-
-	Another example:
-
-    {Sample Sentence 2}
-
-Example:
-
-Word: Happy
-Context: The child was happy because he got a new toy.
-
-Simple explanation:
-A simple definition of the word "Happy" is: Feeling good or joyful.
-
-Usage Samples:
-
-    The sun was shining and everyone was happy.
-
-	Another example:
-
-    I feel so happy when I spend time with my friends.
-
-Word explanation should be in ${lang ?? 'English'} language, and usage samples should be in ${
-		lang ?? 'English'
-	} language.
-
-Now generate for the following input
-
-Word: ${word}
-Context: ${context}
-
-Result:`;
-
-	const response = await openai.createCompletion({
-		model: 'text-davinci-003',
-		prompt: prompt,
-		temperature: 0.7,
-		max_tokens: 256,
-		top_p: 1,
-		frequency_penalty: 0,
-		presence_penalty: 0
+async function translate({ text, to, source }: { text: string; to: string; source?: string }) {
+	const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`;
+	const response = await axios.post<TranslateResponse>(url, {
+		target: to,
+		format: 'text',
+		q: text,
+		...(source && { source })
 	});
 
-	const text = response.data.choices[0]?.text;
+	const data = response.data?.data?.translations[0];
 
-	if (!text) {
-		throw error(500, 'No text returned from OpenAI');
-	}
+	return data?.translatedText;
+}
 
-	const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`;
+export const POST = (async ({ request }) => {
+	const { word, context, studentLanguage, textLanguage, isBeginner, studentName } =
+		await request.json();
 
-	if (langCode !== 'en') {
-		// console.log('Translating to', { langCode, translateTo });
+	const studentLangLong = languages[studentLanguage as keyof typeof languages];
+	const textLangLong = languages[textLanguage as keyof typeof languages];
 
-		const translated = await fetch(url, {
-			method: 'POST',
-			body: JSON.stringify({
-				target: langCode,
-				source: 'en',
-				format: 'text',
-				q: text
-			})
-		}).then((res) => res.json() as Promise<TranslateResponse>);
+	/**
+	 * BEGINNER FLOW:
+	 * We provide a translation service for the student language with explanation.
+	 *
+	 * Step 1 - Translate the word to the student language
+	 * Step 2 - Translate the context to the student language:
+	 * Step 3 - Generate a few example sentences using the word
+	 *
+	 * -----
+	 *
+	 * So we get the following sequence:
+	 *
+	 * translated word (student lang) -> translated context (student lang) -> example sentences (source lang) -> translated example sentences (student lang)
+	 *
+	 * -----
+	 *
+	 * ADVANCED FLOW:
+	 * We provide explanation in the source language with more context, synonyms, antonyms, and example sentences.
+	 *
+	 * Step 1 - Generate a simple explanation for the word in the source language
+	 * Step 2 - Generate a few example sentences using the word
+	 * Step 3 - Generate a few synonyms for the word
+	 * Step 4 - Generate a few antonyms for the word
+	 *
+	 */
 
-		const translatedText = translated.data.translations[0].translatedText;
+	if (isBeginner) {
+		const introForWordTranslation = 'Translating the word';
+		const introForWordTranslationText = await translate({
+			text: introForWordTranslation,
+			to: studentLanguage,
+			source: 'en'
+		});
+		const introForWordTranslationAudio = await googleTTS.getAudioBase64(
+			introForWordTranslationText,
+			{ lang: studentLanguage }
+		);
 
-		const audio = await googleTTS.getAllAudioBase64(translatedText, {
-			lang: langCode ?? 'en'
+		/**
+		 * Generate audio for the source word
+		 */
+		const sourceVoiceOverAudio = await googleTTS.getAudioBase64(word, {
+			lang: textLanguage,
+			slow: true
+		});
+
+		const introMergedAudio = `${introForWordTranslationAudio}${sourceVoiceOverAudio}`;
+
+		/**
+		 * Step 1 - Translate the word to the student language
+		 */
+		const translatedWord = await translate({
+			text: word,
+			to: studentLanguage,
+			source: textLanguage
+		});
+
+		/**
+		 * Generate audio for the translated word
+		 */
+		const translatedWordAudioRes = await googleTTS.getAllAudioBase64(translatedWord, {
+			lang: studentLanguage
+		});
+
+		if (!translatedWordAudioRes) throw error(500, 'Could not generate audio for the word');
+
+		const translatedWordAudio = translatedWordAudioRes.map((i) => i.base64).join('');
+
+		/**
+		 * Step 3 - Generate a few example sentences using the word
+		 */
+		const samples = await chatGptClient.sendMessage(
+			getPromptWithWordExamples(word, context, textLangLong, 'usage')
+		);
+
+		/**
+		 * Get explanation for the word
+		 */
+		const explanation = await chatGptClient.sendMessage(
+			getPromptWithWordExamples(word, context, studentLangLong, 'explanation')
+		);
+
+		/**
+		 * Generate audio for the example sentences
+		 */
+		const exampleSentencesAudioRes = await googleTTS.getAllAudioBase64(samples.response, {
+			lang: textLanguage,
+			slow: true
+		});
+		const explanationAudioRes = await googleTTS.getAllAudioBase64(explanation.response, {
+			lang: studentLanguage
+		});
+
+		if (!exampleSentencesAudioRes || !explanationAudioRes)
+			throw error(500, 'Could not generate audio for the word');
+
+		const exampleSentencesAudio = exampleSentencesAudioRes.map((i) => i.base64).join('');
+		const explanationAudio = explanationAudioRes.map((i) => i.base64).join('');
+
+		const mergedAudio = `${introMergedAudio}${translatedWordAudio}${explanationAudio}${exampleSentencesAudio}`;
+
+		console.log({
+			examples: samples.response,
+			explanation: explanation.response
 		});
 
 		return json({
-			audio,
-			text: translatedText
+			audio: mergedAudio
 		});
+	} else {
+		return json({});
 	}
-
-	const audio = await googleTTS.getAllAudioBase64(text, {
-		lang: langCode ?? 'en'
-	});
-
-	return json({
-		audio,
-		text
-	});
 }) satisfies RequestHandler;
+
+/**
+ * TODO:
+ * I need to create different prompts for word explanations and word examples
+ * Then - translate explanations to the student language
+ * Then - translate examples to the student language
+ * Then - merge all the audio
+ * Then - return the audio
+ */
