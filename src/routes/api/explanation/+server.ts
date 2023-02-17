@@ -52,12 +52,18 @@ I have a word for you: ${word}. This word was used in the following context: "${
 
 async function translate({ text, to, source }: { text: string; to: string; source?: string }) {
 	const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`;
-	const response = await axios.post<TranslateResponse>(url, {
-		target: to,
-		format: 'text',
-		q: text,
-		...(source && { source })
-	});
+	const response = await axios
+		.post<TranslateResponse>(url, {
+			target: to,
+			format: 'text',
+			q: text,
+			...(source && { source })
+		})
+		.catch((e) => {
+			console.error(e);
+			return null;
+		});
+	if (!response) throw error(500, 'Could not translate the word');
 
 	const data = response.data?.data?.translations[0];
 
