@@ -105,11 +105,14 @@ export const POST = (async ({ request }) => {
 
 	if (isBeginner) {
 		const introForWordTranslation = 'Translating the word';
-		const introForWordTranslationText = await translate({
-			text: introForWordTranslation,
-			to: studentLanguage,
-			source: 'en'
-		});
+		const introForWordTranslationText =
+			studentLanguage === 'en'
+				? introForWordTranslation
+				: await translate({
+						text: introForWordTranslation,
+						to: studentLanguage,
+						source: 'en'
+				  });
 		const introForWordTranslationAudio = await googleTTS.getAudioBase64(
 			introForWordTranslationText,
 			{ lang: studentLanguage }
